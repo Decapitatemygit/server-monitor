@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Server Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep: #060a12;
+  --bg-card: #0d1320;
+  --bg-card-hover: #111827;
+  --border: #1a2234;
+  --border-bright: #253049;
+  --text-primary: #e2e8f0;
+  --text-dim: #64748b;
+  --text-label: #94a3b8;
+  --cyan: #22d3ee;
+  --cyan-dim: rgba(34,211,238,0.15);
+  --green: #34d399;
+  --green-dim: rgba(52,211,153,0.12);
+  --amber: #fbbf24;
+  --amber-dim: rgba(251,191,36,0.12);
+  --red: #f87171;
+  --red-dim: rgba(248,113,113,0.12);
+  --purple: #a78bfa;
+  --font-data: 'JetBrains Mono', monospace;
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --radius: 10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  min-height: 100vh;
+  padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 16px);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.pulse-dot.dead {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.hostname {
+  font-family: var(--font-data);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.header-meta {
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (min-width: 640px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 960px) {
+  .grid { grid-template-columns: repeat(3, 1fr); }
+  .card.wide { grid-column: span 2; }
+  .card.full { grid-column: span 3; }
+}
+
+/* ── Cards ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  transition: border-color 0.2s;
+}
+
+.card:hover {
+  border-color: var(--border-bright);
+}
+
+.card-title {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-title .icon {
+  font-style: normal;
+  font-size: 0.85rem;
+}
+
+/* ── Big number ── */
+.big-num {
+  font-family: var(--font-data);
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin-bottom: 4px;
+}
+
+.big-unit {
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
+
+.big-sub {
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  color: var(--text-label);
+  margin-top: 6px;
+}
+
+/* ── Progress bars ── */
+.bar-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease, background 0.3s;
+  background: var(--cyan);
+}
+
+.bar-fill.warn { background: var(--amber); }
+.bar-fill.crit { background: var(--red); }
+
+/* ── Disk rows ── */
+.disk-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.disk-row:last-child { border-bottom: none; }
+
+.disk-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.disk-path {
+  font-family: var(--font-data);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.disk-detail {
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  color: var(--text-label);
+}
+
+.mount-badge {
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.mount-badge.ok { background: var(--green-dim); color: var(--green); }
+.mount-badge.bad { background: var(--red-dim); color: var(--red); }
+
+/* ── Docker list ── */
+.container-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+}
+
+.container-row:last-child { border-bottom: none; }
+
+.container-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.container-dot.up { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.container-dot.down { background: var(--red); box-shadow: 0 0 4px var(--red); }
+
+.container-name { flex: 1; color: var(--text-primary); font-weight: 500; }
+.container-status { color: var(--text-dim); font-size: 0.65rem; text-align: right; }
+
+/* ── SMART ── */
+.smart-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.smart-row:last-child { border-bottom: none; }
+
+.smart-device {
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.smart-attrs {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+  color: var(--text-label);
+}
+
+.smart-attrs span { white-space: nowrap; }
+
+.health-badge {
+  font-family: var(--font-data);
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.health-badge.pass { background: var(--green-dim); color: var(--green); }
+.health-badge.fail { background: var(--red-dim); color: var(--red); }
+.health-badge.unknown { background: var(--amber-dim); color: var(--amber); }
+
+/* ── Backup panel ── */
+.backup-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+
+.backup-status.fresh { background: var(--green-dim); border: 1px solid rgba(52,211,153,0.2); }
+.backup-status.stale { background: var(--red-dim); border: 1px solid rgba(248,113,113,0.2); }
+.backup-status.unknown { background: var(--amber-dim); border: 1px solid rgba(251,191,36,0.2); }
+
+.backup-icon {
+  font-size: 1.6rem;
+  flex-shrink: 0;
+}
+
+.backup-text {
+  font-family: var(--font-data);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.backup-text strong {
+  display: block;
+  font-size: 0.85rem;
+}
+
+/* ── Network interfaces ── */
+.net-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+}
+
+.net-row:last-child { border-bottom: none; }
+
+.net-name { font-weight: 600; }
+.net-ip { color: var(--text-label); font-size: 0.7rem; }
+.net-speed { color: var(--text-dim); font-size: 0.65rem; }
+
+/* ── Core grid ── */
+.core-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.core-cell {
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-data);
+  font-size: 0.6rem;
+  font-weight: 600;
+  transition: background 0.4s;
+  border: 1px solid var(--border);
+}
+
+/* ── Load section ── */
+.load-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+}
+
+.load-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.load-val { font-weight: 700; font-size: 1rem; }
+.load-label { font-size: 0.6rem; color: var(--text-dim); }
+
+/* ── Error state ── */
+.error-banner {
+  background: var(--red-dim);
+  border: 1px solid rgba(248,113,113,0.3);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  font-family: var(--font-data);
+  font-size: 0.85rem;
+  color: var(--red);
+  margin-bottom: 14px;
+  display: none;
+}
+
+.last-update {
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 20px;
+  padding-bottom: 10px;
+}
+</style>
+</head>
+<body>
+
+<div style="max-width:1200px;margin:0 auto;">
+
+<div class="header">
+  <div class="header-left">
+    <div class="pulse-dot" id="pulse"></div>
+    <div class="hostname" id="hostname">connecting…</div>
+  </div>
+  <div class="header-meta">
+    <span id="uptime">—</span>
+    <span id="boot-time">—</span>
+  </div>
+</div>
+
+<div class="error-banner" id="error-banner">Connection lost — retrying…</div>
+
+<div class="grid">
+
+  <!-- CPU -->
+  <div class="card">
+    <div class="card-title"><i class="icon">⚡</i> Processor</div>
+    <div class="big-num" id="cpu-avg">—<span class="big-unit">%</span></div>
+    <div class="big-sub" id="cpu-info"></div>
+    <div class="core-grid" id="core-grid"></div>
+    <div class="load-row">
+      <div class="load-item"><span class="load-val" id="load1">—</span><span class="load-label">1m</span></div>
+      <div class="load-item"><span class="load-val" id="load5">—</span><span class="load-label">5m</span></div>
+      <div class="load-item"><span class="load-val" id="load15">—</span><span class="load-label">15m</span></div>
+    </div>
+  </div>
+
+  <!-- Memory -->
+  <div class="card">
+    <div class="card-title"><i class="icon">🧠</i> Memory</div>
+    <div class="big-num" id="ram-used">—<span class="big-unit">GB</span></div>
+    <div class="big-sub" id="ram-detail"></div>
+    <div class="bar-track"><div class="bar-fill" id="ram-bar" style="width:0%"></div></div>
+    <div style="margin-top:16px;">
+      <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:4px;">Swap</div>
+      <div class="big-sub" id="swap-detail"></div>
+      <div class="bar-track"><div class="bar-fill" id="swap-bar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Backup -->
+  <div class="card">
+    <div class="card-title"><i class="icon">🛡</i> Backup</div>
+    <div id="backup-panel"></div>
+  </div>
+
+  <!-- Disks -->
+  <div class="card wide">
+    <div class="card-title"><i class="icon">💾</i> Storage</div>
+    <div id="disk-list"></div>
+  </div>
+
+  <!-- Docker -->
+  <div class="card">
+    <div class="card-title"><i class="icon">🐳</i> Containers</div>
+    <div id="docker-list"></div>
+  </div>
+
+  <!-- SMART -->
+  <div class="card wide">
+    <div class="card-title"><i class="icon">🔍</i> Drive Health</div>
+    <div id="smart-list"></div>
+  </div>
+
+  <!-- Network -->
+  <div class="card">
+    <div class="card-title"><i class="icon">🌐</i> Network</div>
+    <div id="net-list"></div>
+  </div>
+
+</div>
+
+<div class="last-update" id="last-update">waiting for data…</div>
+
+</div>
+
+<script>
+const API = '/api/status';
+let failCount = 0;
+let prevNet = null;
+
+function barClass(pct) {
+  if (pct > 85) return 'crit';
+  if (pct > 70) return 'warn';
+  return '';
+}
+
+function coreColor(pct) {
+  if (pct > 85) return `background:var(--red-dim);color:var(--red);border-color:rgba(248,113,113,0.25)`;
+  if (pct > 60) return `background:var(--amber-dim);color:var(--amber);border-color:rgba(251,191,36,0.2)`;
+  if (pct > 25) return `background:var(--cyan-dim);color:var(--cyan);border-color:rgba(34,211,238,0.2)`;
+  return `background:transparent;color:var(--text-dim)`;
+}
+
+function formatBytes(bytes) {
+  if (bytes > 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes > 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+  if (bytes > 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function render(d) {
+  // Header
+  document.getElementById('hostname').textContent = d.hostname;
+  document.getElementById('uptime').textContent = 'up ' + d.uptime.uptime_str;
+  document.getElementById('boot-time').textContent = 'since ' + new Date(d.uptime.boot_time).toLocaleDateString();
+
+  // CPU
+  document.getElementById('cpu-avg').innerHTML = d.cpu.usage_avg + '<span class="big-unit">%</span>';
+  let cpuInfo = `${d.cpu.physical_cores} cores / ${d.cpu.cores} threads`;
+  if (d.cpu.freq_current) cpuInfo += ` · ${d.cpu.freq_current} MHz`;
+  const tempEntries = Object.entries(d.cpu.temps || {});
+  if (tempEntries.length) cpuInfo += ` · ${tempEntries[0][1]}°C`;
+  document.getElementById('cpu-info').textContent = cpuInfo;
+
+  const coreGrid = document.getElementById('core-grid');
+  coreGrid.innerHTML = d.cpu.usage_per_core.map((pct, i) =>
+    `<div class="core-cell" style="${coreColor(pct)}">${Math.round(pct)}</div>`
+  ).join('');
+
+  document.getElementById('load1').textContent = d.cpu.load_1;
+  document.getElementById('load5').textContent = d.cpu.load_5;
+  document.getElementById('load15').textContent = d.cpu.load_15;
+
+  // Memory
+  document.getElementById('ram-used').innerHTML = d.memory.used_gb + '<span class="big-unit">GB</span>';
+  document.getElementById('ram-detail').textContent =
+    `${d.memory.available_gb} GB free of ${d.memory.total_gb} GB · ${d.memory.percent}%`;
+  const ramBar = document.getElementById('ram-bar');
+  ramBar.style.width = d.memory.percent + '%';
+  ramBar.className = 'bar-fill ' + barClass(d.memory.percent);
+
+  document.getElementById('swap-detail').textContent =
+    `${d.memory.swap_used_gb} GB of ${d.memory.swap_total_gb} GB`;
+  const swapBar = document.getElementById('swap-bar');
+  swapBar.style.width = d.memory.swap_percent + '%';
+  swapBar.className = 'bar-fill ' + barClass(d.memory.swap_percent);
+
+  // Backup
+  const bp = document.getElementById('backup-panel');
+  const b = d.backup;
+  if (!b.log_exists) {
+    bp.innerHTML = `<div class="backup-status unknown"><span class="backup-icon">❓</span>
+      <div class="backup-text"><strong>No backup log found</strong>${b.last_line || 'Log file does not exist'}</div></div>`;
+  } else if (b.stale) {
+    bp.innerHTML = `<div class="backup-status stale"><span class="backup-icon">🔴</span>
+      <div class="backup-text"><strong>Backup is stale</strong>Last success ${b.hours_ago ? b.hours_ago + 'h ago' : 'never'}</div></div>`;
+  } else {
+    bp.innerHTML = `<div class="backup-status fresh"><span class="backup-icon">✅</span>
+      <div class="backup-text"><strong>Backup healthy</strong>${b.hours_ago}h ago</div></div>`;
+  }
+
+  // Disks
+  const dl = document.getElementById('disk-list');
+  dl.innerHTML = d.disks.map(disk => {
+    if (!disk.mounted) {
+      return `<div class="disk-row"><div class="disk-header">
+        <span class="disk-path">${disk.path}</span>
+        <span class="mount-badge bad">UNMOUNTED</span>
+      </div></div>`;
+    }
+    return `<div class="disk-row"><div class="disk-header">
+      <span class="disk-path">${disk.path}</span>
+      <span class="mount-badge ok">mounted</span>
+    </div>
+    <div class="disk-detail">${disk.used_gb} GB / ${disk.total_gb} GB · ${disk.free_gb} GB free</div>
+    <div class="bar-track"><div class="bar-fill ${barClass(disk.percent)}" style="width:${disk.percent}%"></div></div></div>`;
+  }).join('');
+
+  // Docker
+  const dcl = document.getElementById('docker-list');
+  dcl.innerHTML = d.docker.map(c => {
+    if (c.error) return `<div class="container-row" style="color:var(--red)">${c.error}</div>`;
+    return `<div class="container-row">
+      <div class="container-dot ${c.running ? 'up' : 'down'}"></div>
+      <span class="container-name">${c.name}</span>
+      <span class="container-status">${c.status.split(' ').slice(0, 3).join(' ')}</span>
+    </div>`;
+  }).join('');
+
+  // SMART
+  const sl = document.getElementById('smart-list');
+  sl.innerHTML = d.smart.map(s => {
+    if (s.error) return `<div class="smart-row" style="color:var(--red)">${s.error}</div>`;
+    const hc = s.health === 'PASSED' ? 'pass' : s.health === 'FAILED' ? 'fail' : 'unknown';
+    let attrs = '';
+    if (s.power_hours != null) attrs += `<span>${Math.round(s.power_hours / 24)}d on</span>`;
+    if (s.reallocated != null) attrs += `<span>realloc: ${s.reallocated}</span>`;
+    if (s.pending != null) attrs += `<span>pending: ${s.pending}</span>`;
+    if (s.temp_c != null) attrs += `<span>${s.temp_c}°C</span>`;
+    return `<div class="smart-row">
+      <div class="smart-device">
+        <span>${s.model || s.device} <span style="color:var(--text-dim);font-weight:400">${s.size || ''}</span></span>
+        <span class="health-badge ${hc}">${s.health}</span>
+      </div>
+      <div class="smart-attrs">${attrs}</div>
+    </div>`;
+  }).join('');
+
+  // Network
+  const nl = document.getElementById('net-list');
+  const ifaces = Object.entries(d.network.interfaces || {});
+  nl.innerHTML = ifaces.map(([name, info]) => {
+    const status = info.up ? (info.speed_mbps ? info.speed_mbps + ' Mbps' : 'up') : 'down';
+    return `<div class="net-row">
+      <div>
+        <span class="net-name">${name}</span><br>
+        <span class="net-ip">${info.ip || '—'}</span>
+      </div>
+      <span class="net-speed">${status}</span>
+    </div>`;
+  }).join('');
+
+  // Footer
+  document.getElementById('last-update').textContent =
+    'updated ' + new Date(d.timestamp).toLocaleTimeString();
+}
+
+async function poll() {
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    failCount = 0;
+    document.getElementById('error-banner').style.display = 'none';
+    document.getElementById('pulse').className = 'pulse-dot';
+    render(data);
+  } catch (e) {
+    failCount++;
+    if (failCount > 2) {
+      document.getElementById('error-banner').style.display = 'block';
+      document.getElementById('pulse').className = 'pulse-dot dead';
+    }
+  }
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+
+</body>
+</html>
