@@ -6,13 +6,14 @@ Serves a JSON API at /api/status and the dashboard at /.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 import threading
 import urllib.request
 import urllib.parse
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -127,52 +128,94 @@ def get_disks():
     return disks
 
 
+def _smart_parse(output):
+    """Pull health + key attributes out of `smartctl -H -A` text (ATA and NVMe)."""
+    info = {"health": "UNKNOWN"}
+    for line in output.splitlines():
+        s = line.strip()
+        if "overall-health" in s or "SMART Health Status" in s:
+            if "PASSED" in s or s.endswith("OK"):
+                info["health"] = "PASSED"
+            elif "FAILED" in s:
+                info["health"] = "FAILED"
+            continue
+        parts = s.split()
+        # ATA rows: ID NAME FLAG VALUE WORST THRESH TYPE UPDATED WHEN_FAILED RAW...
+        if len(parts) >= 10 and parts[0].isdigit():
+            m = re.match(r"\d+", parts[9])
+            if not m:
+                continue
+            raw = int(m.group())
+            name = parts[1]
+            if name == "Reallocated_Sector_Ct":
+                info["reallocated"] = raw
+            elif name == "Current_Pending_Sector":
+                info["pending"] = raw
+            elif name == "Power_On_Hours":
+                info["power_hours"] = raw
+            elif name in ("Temperature_Celsius", "Airflow_Temperature_Cel"):
+                info["temp_c"] = raw
+            continue
+        # NVMe rows: "Label:   value"
+        m = re.match(r"Power On Hours:\s+([\d,]+)", s)
+        if m:
+            info["power_hours"] = int(m.group(1).replace(",", ""))
+        m = re.match(r"Percentage Used:\s+(\d+)%", s)
+        if m:
+            info["wear_pct"] = int(m.group(1))
+        m = re.match(r"Temperature:\s+(\d+) Celsius", s)
+        if m:
+            info["temp_c"] = int(m.group(1))
+    return info
+
+
 def get_smart():
-    results = []
     try:
-        lsblk = subprocess.run(
-            ["lsblk", "-dnpo", "NAME,SIZE,MODEL,TYPE"],
+        out = subprocess.run(
+            ["lsblk", "-dn", "-J", "-o", "NAME,SIZE,MODEL,TYPE"],
             capture_output=True, text=True, timeout=10
-        )
-        for line in lsblk.stdout.strip().split("\n"):
-            parts = line.split(None, 3)
-            if len(parts) < 4 or parts[3].strip() != "disk":
-                continue
-            dev = parts[0]
-            if dev.startswith("/dev/loop") or dev.startswith("/dev/nvme"):
-                # include nvme too
-                pass
-            if dev.startswith("/dev/loop"):
-                continue
-            entry = {"device": dev, "size": parts[1], "model": parts[2] if len(parts) > 2 else ""}
-            try:
-                smart = subprocess.run(
-                    ["sudo", "-n", "smartctl", "-H", "-A", dev, "-d", "auto"],
+        ).stdout
+        devices = json.loads(out).get("blockdevices", [])
+    except Exception as e:
+        return [{"error": f"lsblk failed: {e}"}]
+
+    results = []
+    for d in devices:
+        if d.get("type") != "disk":
+            continue
+        dev = "/dev/" + d["name"]
+        entry = {"device": dev, "size": d.get("size", ""),
+                 "model": (d.get("model") or "").strip(), "health": "UNKNOWN"}
+        try:
+            for extra in ([], ["-d", "sat"]):  # second try for USB bridges
+                proc = subprocess.run(
+                    ["sudo", "-n", "/usr/sbin/smartctl", "-H", "-A", *extra, dev],
                     capture_output=True, text=True, timeout=30
                 )
-                output = smart.stdout
-                if "PASSED" in output:
-                    entry["health"] = "PASSED"
-                elif "FAILED" in output:
-                    entry["health"] = "FAILED"
-                else:
-                    entry["health"] = "UNKNOWN"
-
-                for attr_line in output.split("\n"):
-                    if "Reallocated_Sector_Ct" in attr_line:
-                        entry["reallocated"] = int(attr_line.split()[-1])
-                    elif "Current_Pending_Sector" in attr_line:
-                        entry["pending"] = int(attr_line.split()[-1])
-                    elif "Power_On_Hours" in attr_line:
-                        entry["power_hours"] = int(attr_line.split()[-1])
-                    elif "Temperature_Celsius" in attr_line:
-                        entry["temp_c"] = int(attr_line.split()[-1].split()[0])
-            except Exception as e:
-                entry["health"] = f"ERROR: {e}"
-            results.append(entry)
-    except Exception as e:
-        results.append({"error": str(e)})
+                if "password is required" in proc.stderr:
+                    entry["note"] = "sudo blocked smartctl - check /etc/sudoers.d/server-monitor"
+                    break
+                entry.update(_smart_parse(proc.stdout))
+                if entry["health"] != "UNKNOWN":
+                    break
+            if entry["health"] == "UNKNOWN" and "note" not in entry:
+                entry["note"] = "no SMART data returned"
+        except Exception as e:
+            entry["note"] = f"smartctl error: {e}"
+        results.append(entry)
     return results
+
+
+_smart_cache = {"data": None, "time": 0}
+SMART_TTL = 600  # drives don't change health every 3s; don't wake/poll them that often
+
+
+def get_smart_cached():
+    now = time.time()
+    if _smart_cache["data"] is None or now - _smart_cache["time"] > SMART_TTL:
+        _smart_cache["data"] = get_smart()
+        _smart_cache["time"] = now
+    return _smart_cache["data"]
 
 
 def get_docker():
@@ -282,6 +325,7 @@ def collect_all():
     mem = get_memory()
     disks = get_disks()
     backup = get_backup_status()
+    smart = get_smart_cached()
 
     # ── Alerting ──
     if cpu["usage_avg"] > ALERT_CPU_PCT:
@@ -293,6 +337,13 @@ def collect_all():
             maybe_alert(f"disk_{d['path']}", f"Disk {d['path']} at {d['percent']}% (threshold {ALERT_DISK_PCT}%)")
         if not d["mounted"]:
             maybe_alert(f"unmount_{d['path']}", f"⚠️ {d['path']} is NOT MOUNTED!")
+    for s in smart:
+        label = s.get("model") or s.get("device", "drive")
+        if s.get("health") == "FAILED":
+            maybe_alert(f"smart_{s.get('device')}", f"💀 {label} SMART health FAILED")
+        elif s.get("pending", 0) > 0 or s.get("reallocated", 0) > 0:
+            maybe_alert(f"smartwarn_{s.get('device')}",
+                        f"{label}: {s.get('reallocated', 0)} reallocated, {s.get('pending', 0)} pending sectors")
     if backup.get("stale"):
         maybe_alert("backup_stale", f"Last backup is {backup.get('hours_ago', '?')} hours old (threshold {ALERT_BACKUP_STALE_HOURS}h)")
 
@@ -303,7 +354,7 @@ def collect_all():
         "cpu": cpu,
         "memory": mem,
         "disks": disks,
-        "smart": get_smart(),
+        "smart": smart,
         "docker": get_docker(),
         "network": get_network(),
         "backup": backup,
@@ -366,7 +417,7 @@ def main():
     # warm the psutil CPU counter
     psutil.cpu_percent(interval=0, percpu=True)
 
-    server = HTTPServer(("0.0.0.0", PORT), MonitorHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), MonitorHandler)
     print(f"Server Monitor running on http://0.0.0.0:{PORT}")
     try:
         server.serve_forever()

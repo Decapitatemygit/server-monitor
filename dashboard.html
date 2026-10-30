@@ -598,22 +598,28 @@ function render(d) {
 
   // SMART
   const sl = document.getElementById('smart-list');
-  sl.innerHTML = d.smart.map(s => {
-    if (s.error) return `<div class="smart-row" style="color:var(--red)">${s.error}</div>`;
-    const hc = s.health === 'PASSED' ? 'pass' : s.health === 'FAILED' ? 'fail' : 'unknown';
-    let attrs = '';
-    if (s.power_hours != null) attrs += `<span>${Math.round(s.power_hours / 24)}d on</span>`;
-    if (s.reallocated != null) attrs += `<span>realloc: ${s.reallocated}</span>`;
-    if (s.pending != null) attrs += `<span>pending: ${s.pending}</span>`;
-    if (s.temp_c != null) attrs += `<span>${s.temp_c}°C</span>`;
-    return `<div class="smart-row">
-      <div class="smart-device">
-        <span>${s.model || s.device} <span style="color:var(--text-dim);font-weight:400">${s.size || ''}</span></span>
-        <span class="health-badge ${hc}">${s.health}</span>
-      </div>
-      <div class="smart-attrs">${attrs}</div>
-    </div>`;
-  }).join('');
+  if (!d.smart.length) {
+    sl.innerHTML = '<div class="smart-row" style="color:var(--text-dim)">No drives reported. Check that lsblk and smartctl work for this user.</div>';
+  } else {
+    sl.innerHTML = d.smart.map(s => {
+      if (s.error) return `<div class="smart-row" style="color:var(--red)">${s.error}</div>`;
+      const hc = s.health === 'PASSED' ? 'pass' : s.health === 'FAILED' ? 'fail' : 'unknown';
+      let attrs = '';
+      if (s.power_hours != null) attrs += `<span>${Math.round(s.power_hours / 24)}d on</span>`;
+      if (s.reallocated != null) attrs += `<span>realloc: ${s.reallocated}</span>`;
+      if (s.pending != null) attrs += `<span>pending: ${s.pending}</span>`;
+      if (s.wear_pct != null) attrs += `<span>wear: ${s.wear_pct}%</span>`;
+      if (s.temp_c != null) attrs += `<span>${s.temp_c}°C</span>`;
+      if (s.note) attrs += `<span style="color:var(--amber)">${s.note}</span>`;
+      return `<div class="smart-row">
+        <div class="smart-device">
+          <span>${s.model || s.device} <span style="color:var(--text-dim);font-weight:400">${s.size || ''}</span></span>
+          <span class="health-badge ${hc}">${s.health}</span>
+        </div>
+        <div class="smart-attrs">${attrs}</div>
+      </div>`;
+    }).join('');
+  }
 
   // Network
   const nl = document.getElementById('net-list');
